@@ -1,6 +1,6 @@
 // Caches the app shell so it opens instantly and works offline.
 // Bump VERSION whenever you change index.html, app.js or styles.css.
-const VERSION = "rq-v2";
+const VERSION = "rq-v3";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "firebase-config.js", "content.js", "manifest.webmanifest",
   "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"];
 
