@@ -125,6 +125,7 @@ function watchChallenge() {
     entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderAll();
     if (!$("view-loading").hidden) route();
+    if (pendingSync) applyHealthSync();
   }));
   unsubs.push(() => challengeUnsubs.forEach(f => f()));
 }
@@ -263,6 +264,37 @@ $("log-form").onsubmit = e => {
   if (hits.length) setTimeout(() => openPostcard(hits[hits.length - 1], true), 300);
   else toast(`+${fmt(miles)} miles logged`);
 };
+
+/* ---------- Health sync (from an iPhone Shortcut) ----------
+   The Shortcut opens  ?sync=health&steps=8421  (or &miles=3.4, optional &date=YYYY-MM-DD).
+   One entry per day with a fixed id, so running it again the same day updates
+   that day's total instead of adding to it. */
+let pendingSync = (() => {
+  const q = new URLSearchParams(location.search);
+  if (q.get("sync") !== "health") return null;
+  const num = v => { const n = parseFloat(String(v ?? "").replace(/[^0-9.]/g, "")); return n > 0 ? n : 0; };
+  const d = q.get("date") || "";
+  return { steps: num(q.get("steps")), miles: num(q.get("miles")), date: /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : todayISO() };
+})();
+function applyHealthSync() {
+  const s = pendingSync; pendingSync = null;
+  history.replaceState(null, "", location.pathname + location.hash);
+  if (s.date > todayISO()) { toast("Health sync skipped: that date is in the future."); return; }
+  const useMiles = s.miles > 0 && s.miles < 100, useSteps = s.steps > 0 && s.steps < 200000;
+  if (!useMiles && !useSteps) { toast("Nothing to sync from Health yet today."); return; }
+  const type = useMiles ? "miles" : "steps", amount = useMiles ? s.miles : Math.round(s.steps);
+  const miles = Math.round(TYPES[type].toMiles(amount) * 100) / 100;
+  const id = "health-" + s.date, prev = entries.find(e => e.id === id);
+  const after = total() - (prev?.miles || 0) + miles;
+  setDoc(doc(db, "users", user.uid, "challenges", challengeId, "entries", id), {
+    type, amount, miles, date: s.date, note: "", source: "health",
+    createdMs: prev?.createdMs || Date.now(), createdAt: serverTimestamp()
+  }).catch(err => { console.error(err); toast("Health sync didn’t save. Try again."); });
+  const hits = crossed(total(), after);
+  location.hash = "#map";
+  if (hits.length) setTimeout(() => openPostcard(hits[hits.length - 1], true), 300);
+  else toast(`Synced from Health: ${fmt(miles)} miles ${s.date === todayISO() ? "today" : "on " + shortDate(s.date)}`);
+}
 
 /* ---------- Logbook ---------- */
 function describe(e) {

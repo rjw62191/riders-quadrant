@@ -41,6 +41,28 @@ Change files, then bump `VERSION` in `sw.js` so installed copies pick up the new
 - `firestore.rules`: database security rules
 - `sw.js`, `manifest.webmanifest`, `icons/`: offline support and home-screen install
 
+## Syncing steps from Zepp (iPhone)
+A website can't read Apple Health directly, so an iPhone Shortcut reads the day's steps and opens
+the app with them in the link: `?sync=health&steps=8421` (also accepts `&miles=3.4` and
+`&date=YYYY-MM-DD`). The app saves one "From Health app" entry per day (id `health-YYYY-MM-DD`), so
+running the Shortcut again the same day updates that day's total instead of adding to it.
+
+1. **Zepp → Profile → Add accounts → Apple Health**, and allow it to write steps.
+2. **Shortcuts app → + (new shortcut)**, add these actions in order:
+   - **Find Health Samples** where **Type** is **Steps**, add filter **Start Date is today**, and add
+     filter **Source is Zepp** (otherwise iPhone and Zepp steps both get counted).
+   - **Calculate Statistics**: **Sum** of **Health Samples**.
+   - **URL**: `https://YOUR-USERNAME.github.io/riders-quadrant/?sync=health&steps=` then insert the
+     **Statistics** variable at the end.
+   - **Open URLs**.
+   Name it "Sync Riders Quadrant" and run it once to allow Health access.
+3. **Shortcuts → Automation → + → App → Zepp → Is Closed → Run Immediately** → pick the shortcut.
+   Zepp pushes watch data to Health when it's opened, so closing Zepp is a good moment to sync.
+
+The link opens in Safari, which keeps its own sign-in separate from the home-screen app: sign in
+once in Safari too. Don't also log walks or steps by hand, or they'll count twice; manual logging is
+still right for cycling and other workouts.
+
 ## Data model
 ```
 users/{uid}                         { currentChallenge }
