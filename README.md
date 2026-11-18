@@ -42,22 +42,56 @@ Change files, then bump `VERSION` in `sw.js` so installed copies pick up the new
 - `sw.js`, `manifest.webmanifest`, `icons/`: offline support and home-screen install
 
 ## Syncing steps from Zepp (iPhone)
-A website can't read Apple Health directly, so an iPhone Shortcut reads the day's steps and opens
-the app with them in the link: `?sync=health&steps=8421` (also accepts `&miles=3.4` and
-`&date=YYYY-MM-DD`). The app saves one "From Health app" entry per day (id `health-YYYY-MM-DD`), so
-running the Shortcut again the same day updates that day's total instead of adding to it.
+A website can't read Apple Health directly, so an iPhone Shortcut reads the steps and opens the app
+with them in the link. The Shortcut sends **each of the last 7 days**, so a day when the Shortcut
+didn't run is still picked up the next time it does (as long as that's within a week):
 
-1. **Zepp → Profile → Add accounts → Apple Health**, and allow it to write steps.
-2. **Shortcuts app → + (new shortcut)**, add these actions in order:
-   - **Find Health Samples** where **Type** is **Steps**, add filter **Start Date is today**, and add
-     filter **Source is Zepp** (otherwise iPhone and Zepp steps both get counted).
-   - **Calculate Statistics**: **Sum** of **Health Samples**.
-   - **URL**: `https://YOUR-USERNAME.github.io/riders-quadrant/?sync=health&steps=` then insert the
-     **Statistics** variable at the end.
-   - **Open URLs**.
-   Name it "Sync Riders Quadrant" and run it once to allow Health access.
-3. **Shortcuts → Automation → + → App → Zepp → Is Closed → Run Immediately** → pick the shortcut.
-   Zepp pushes watch data to Health when it's opened, so closing Zepp is a good moment to sync.
+`?sync=health&days=2026-11-12:8421;2026-11-13:6050;2026-11-14:9120`
+
+The app saves one "From Health app" entry per day (id `health-YYYY-MM-DD`). Sending a day again
+updates it instead of adding to it, and a day's total only ever goes up, so the oldest day being cut
+short by the 7-day window never lowers it. (The older one-day link, `?sync=health&steps=8421` with
+optional `&miles=3.4` and `&date=YYYY-MM-DD`, still works. Add `&unit=miles` to a `days` link if the
+numbers are miles.)
+
+### Step 1: Let Zepp write to Apple Health
+**Zepp → Profile → Add accounts → Apple Health**, and allow it to write **Steps**.
+
+### Step 2: Build the Shortcut
+Open the **Shortcuts** app → **+** (top right) to make a new shortcut. Add these actions in this
+order (tap **Search for apps and actions** to find each one):
+
+1. **Find Health Samples**
+   - Tap **Type** → **Steps**.
+   - Tap **Add Filter**, set it to **Start Date** · **is in the last** · **7** · **days**.
+   - Tap **Add Filter** again, set it to **Source** · **is** · **Zepp** (otherwise iPhone and Zepp
+     steps both get counted).
+   - Tap the arrow or **Show More** on the action and set **Group By** to **Day**. This turns the
+     samples into one total per day.
+2. **Repeat with Each** → it should fill in **Health Samples** by itself. The next actions go
+   *inside* the repeat (between "Repeat with each" and "End Repeat").
+3. **Format Date** (inside the repeat)
+   - Tap the date field → pick **Repeat Item**, then tap **Repeat Item** again and choose
+     **Start Date**.
+   - Set **Date Format** to **Custom** and type `yyyy-MM-dd` exactly (lowercase y and d, capital M).
+4. **Get Details of Health Sample** (inside the repeat)
+   - Set it to get **Value** of **Repeat Item**.
+5. **Text** (inside the repeat). Make it read exactly:
+   **Formatted Date** `:` **Value**
+   (insert the Formatted Date variable, type a colon, then insert the Value variable; no spaces).
+6. **Combine Text** (after **End Repeat**)
+   - It should use **Repeat Results**. Tap **New Lines** and change it to **Custom**, then type `;`
+7. **URL**: type `https://YOUR-USERNAME.github.io/riders-quadrant/?sync=health&days=` and then insert
+   the **Combined Text** variable at the end.
+8. **Open URLs**.
+
+Tap the name at the top, call it "Sync Riders Quadrant", and tap **Done**. Run it once by hand and
+allow Health access when asked. The app should open and say "Synced 7 days from Health" (or "already
+up to date").
+
+### Step 3: Run it automatically
+**Shortcuts → Automation → + → App → Zepp → Is Closed → Run Immediately** → pick the shortcut.
+Zepp pushes watch data to Health when it's opened, so closing Zepp is a good moment to sync.
 
 The link opens in Safari, which keeps its own sign-in separate from the home-screen app: sign in
 once in Safari too. Don't also log walks or steps by hand, or they'll count twice; manual logging is

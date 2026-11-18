@@ -266,34 +266,71 @@ $("log-form").onsubmit = e => {
 };
 
 /* ---------- Health sync (from an iPhone Shortcut) ----------
-   The Shortcut opens  ?sync=health&steps=8421  (or &miles=3.4, optional &date=YYYY-MM-DD).
-   One entry per day with a fixed id, so running it again the same day updates
-   that day's total instead of adding to it. */
+   One day:      ?sync=health&steps=8421  (or &miles=3.4, optional &date=YYYY-MM-DD)
+   Several days: ?sync=health&days=2026-11-12:8421;2026-11-13:6050;...
+                 (add &unit=miles if the numbers are miles instead of steps)
+   Each day is saved as one entry with a fixed id (health-YYYY-MM-DD), so sending the
+   same day again updates it instead of adding to it. A day only ever goes up: if the
+   new number is smaller than what's saved (for example the Shortcut's 7-day window
+   cut the oldest day short), the saved number is kept. */
 let pendingSync = (() => {
   const q = new URLSearchParams(location.search);
   if (q.get("sync") !== "health") return null;
   const num = v => { const n = parseFloat(String(v ?? "").replace(/[^0-9.]/g, "")); return n > 0 ? n : 0; };
-  const d = q.get("date") || "";
-  return { steps: num(q.get("steps")), miles: num(q.get("miles")), date: /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : todayISO() };
+  const days = [];
+  if (q.has("days")) {
+    const unit = q.get("unit") === "miles" ? "miles" : "steps";
+    // Split on the dates themselves, so it works with ; , | or new lines between days,
+    // and with numbers that carry thousands separators (8,421).
+    const re = /(\d{4}-\d{2}-\d{2})\s*[:=]\s*([\s\S]*?)(?=[\s;,|]*\d{4}-\d{2}-\d{2}|$)/g;
+    for (const [, date, raw] of q.get("days").matchAll(re)) {
+      const n = unit === "miles" ? num(raw) : num(String(raw).replace(/[.,](?=\d{3}\b)/g, ""));
+      days.push({ date, steps: unit === "steps" ? n : 0, miles: unit === "miles" ? n : 0 });
+    }
+  } else {
+    const d = q.get("date") || "";
+    days.push({ steps: num(q.get("steps")), miles: num(q.get("miles")), date: /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : todayISO() });
+  }
+  return days;
 })();
 function applyHealthSync() {
-  const s = pendingSync; pendingSync = null;
+  const days = pendingSync; pendingSync = null;
   history.replaceState(null, "", location.pathname + location.hash);
-  if (s.date > todayISO()) { toast("Health sync skipped: that date is in the future."); return; }
-  const useMiles = s.miles > 0 && s.miles < 100, useSteps = s.steps > 0 && s.steps < 200000;
-  if (!useMiles && !useSteps) { toast("Nothing to sync from Health yet today."); return; }
-  const type = useMiles ? "miles" : "steps", amount = useMiles ? s.miles : Math.round(s.steps);
-  const miles = Math.round(TYPES[type].toMiles(amount) * 100) / 100;
-  const id = "health-" + s.date, prev = entries.find(e => e.id === id);
-  const after = total() - (prev?.miles || 0) + miles;
-  setDoc(doc(db, "users", user.uid, "challenges", challengeId, "entries", id), {
-    type, amount, miles, date: s.date, note: "", source: "health",
-    createdMs: prev?.createdMs || Date.now(), createdAt: serverTimestamp()
-  }).catch(err => { console.error(err); toast("Health sync didn’t save. Try again."); });
-  const hits = crossed(total(), after);
+  // Same date listed twice: keep the bigger one. Ignore future dates and junk values.
+  const byDate = new Map();
+  for (const s of days) {
+    if (s.date > todayISO()) continue;
+    const useMiles = s.miles > 0 && s.miles < 100, useSteps = s.steps > 0 && s.steps < 200000;
+    if (!useMiles && !useSteps) continue;
+    const type = useMiles ? "miles" : "steps", amount = useMiles ? s.miles : Math.round(s.steps);
+    const miles = Math.round(TYPES[type].toMiles(amount) * 100) / 100;
+    if (!byDate.has(s.date) || byDate.get(s.date).miles < miles) byDate.set(s.date, { date: s.date, type, amount, miles });
+  }
+  if (!byDate.size) { toast(days.some(s => s.date > todayISO()) ? "Health sync skipped: that date is in the future." : "Nothing to sync from Health yet today."); return; }
+
+  const before = total();
+  let after = before; const changed = [];
+  for (const d of [...byDate.values()].sort((a, b) => a.date < b.date ? -1 : 1)) {
+    const id = "health-" + d.date, prev = entries.find(e => e.id === id);
+    if (prev && (prev.miles || 0) >= d.miles - 1e-9) continue;   // already have this much (or more)
+    after += d.miles - (prev?.miles || 0);
+    changed.push(d);
+    setDoc(doc(db, "users", user.uid, "challenges", challengeId, "entries", id), {
+      type: d.type, amount: d.amount, miles: d.miles, date: d.date, note: "", source: "health",
+      createdMs: prev?.createdMs || Date.now(), createdAt: serverTimestamp()
+    }).catch(err => { console.error(err); toast("Health sync didn’t save. Try again."); });
+  }
+  const hits = crossed(before, after);
   location.hash = "#map";
-  if (hits.length) setTimeout(() => openPostcard(hits[hits.length - 1], true), 300);
-  else toast(`Synced from Health: ${fmt(miles)} miles ${s.date === todayISO() ? "today" : "on " + shortDate(s.date)}`);
+  if (hits.length) { setTimeout(() => openPostcard(hits[hits.length - 1], true), 300); return; }
+  if (!changed.length) { toast("Health sync: already up to date"); return; }
+  const added = fmt(after - before);
+  if (changed.length === 1) {
+    const d = changed[0];
+    toast(`Synced from Health: +${added} miles ${d.date === todayISO() ? "today" : "on " + shortDate(d.date)}`);
+  } else {
+    toast(`Synced ${changed.length} days from Health: +${added} miles`);
+  }
 }
 
 /* ---------- Logbook ---------- */
